@@ -43,7 +43,7 @@ HRESULT CreateDeviceD3D(HWND hWnd)
     sd.BufferCount = 2;
     sd.BufferDesc.Width = 0;
     sd.BufferDesc.Height = 0;
-    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     sd.BufferDesc.RefreshRate.Numerator = 60;
     sd.BufferDesc.RefreshRate.Denominator = 1;
     sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
@@ -102,6 +102,14 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
+
+static void SRGBToLinear(ImVec4* color)
+{
+    color->x = color->x < 0.04045f ? color->x / 12.92f : powf(fabsf(color->x + 0.055f) / 1.055f, 2.4f);
+    color->y = color->y < 0.04045f ? color->y / 12.92f : powf(fabsf(color->y + 0.055f) / 1.055f, 2.4f);
+    color->z = color->z < 0.04045f ? color->z / 12.92f : powf(fabsf(color->z + 0.055f) / 1.055f, 2.4f);
+}
+
 
 int main(int, char**)
 {
@@ -205,7 +213,10 @@ int main(int, char**)
 
         // Rendering
         g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, NULL);
-        g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, (float*)&clear_color);
+
+        ImVec4 linear_clear_color = clear_color;
+        SRGBToLinear(&linear_clear_color);
+        g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, (float*)&linear_clear_color);
         ImGui::Render();
 
         g_pSwapChain->Present(1, 0); // Present with vsync

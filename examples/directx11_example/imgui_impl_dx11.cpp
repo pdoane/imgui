@@ -401,11 +401,17 @@ bool    ImGui_ImplDX11_CreateDeviceObjects()
             float2 uv  : TEXCOORD0;\
             };\
             \
+            float3 SRGBToLinear(float3 color)\
+            {\
+            return color < 0.04045 ? color / 12.92 : pow(abs(color + 0.055) / 1.055, 2.4);\
+            }\
+            \
             PS_INPUT main(VS_INPUT input)\
             {\
             PS_INPUT output;\
             output.pos = mul( ProjectionMatrix, float4(input.pos.xy, 0.f, 1.f));\
-            output.col = input.col;\
+            output.col.rgb = SRGBToLinear(input.col.rgb);\
+            output.col.a = input.col.a;\
             output.uv  = input.uv;\
             return output;\
             }";
