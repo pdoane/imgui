@@ -33,7 +33,6 @@ static ID3D11Buffer*            g_pVertexConstantBuffer = NULL;
 static ID3D10Blob *             g_pPixelShaderBlob = NULL;
 static ID3D11PixelShader*       g_pPixelShader = NULL;
 static ID3D11SamplerState*      g_pFontSampler = NULL;
-static ID3D11ShaderResourceView*g_pFontTextureView = NULL;
 static ID3D11RasterizerState*   g_pRasterizerState = NULL;
 static ID3D11BlendState*        g_pBlendState = NULL;
 static ID3D11DepthStencilState* g_pDepthStencilState = NULL;
@@ -43,6 +42,108 @@ struct VERTEX_CONSTANT_BUFFER
 {
     float        mvp[4][4];
 };
+
+// DPI Support
+
+#include "imgui_internal.h" // For SetCurrentFont
+
+struct ImDpiData
+{
+    float UiScale;
+    ImFontAtlas Fonts;
+    ID3D11ShaderResourceView* pFontTextureView;
+};
+
+static ImVector<ImDpiData>      g_dpiData;
+static bool                     g_dpiDirty = true;
+static ImGuiStyle               g_baseStyle;
+static ImGui_Impl_FontCallback  g_fontCB;
+
+static void ImGui_ImplDX11_CreateFontsTexture(ImDpiData* dpi);
+
+
+static ImDpiData* FindDpiData(float uiScale)
+{
+    for (int i = 0; i != g_dpiData.Size; i++)
+    {
+        ImDpiData* dpi = &g_dpiData[i];
+        if (dpi->UiScale == uiScale)
+            return dpi;
+    }
+    return nullptr;
+}
+
+static ImDpiData* AddDpiData(float uiScale)
+{
+    ImDpiData dpi;
+    dpi.UiScale = uiScale;
+    dpi.pFontTextureView = NULL;
+    g_dpiData.push_back(dpi);
+
+    return &g_dpiData.back();
+}
+
+static int FindFontIndex(ImFontAtlas* atlas, ImFont* font)
+{
+    for (int i = 0; i < atlas->Fonts.Size; ++i)
+    {
+        if (atlas->Fonts[i] == font)
+            return i;
+    }
+
+    return -1;
+}
+
+static void SetUiScale(float uiScale)
+{
+    ImGuiIO& io = ImGui::GetIO();
+
+    float curScale = io.DisplayFramebufferScale.x;
+    if (curScale == uiScale && !g_dpiDirty)
+        return;
+
+    ImDpiData* dpi = FindDpiData(uiScale);
+    if (!dpi)
+    {
+        dpi = AddDpiData(uiScale);
+        g_fontCB(&dpi->Fonts, uiScale);
+    }
+
+    if (!dpi->pFontTextureView)
+        ImGui_ImplDX11_CreateFontsTexture(dpi);
+
+    int defaultIndex = FindFontIndex(io.Fonts, io.FontDefault);
+    int currentIndex = FindFontIndex(io.Fonts, ImGui::GetCurrentContext()->Font);
+
+    ImGuiStyle& style = ImGui::GetStyle();
+    style = g_baseStyle;
+    style.ScaleAllSizes(uiScale);
+
+    io.DisplayFramebufferScale = { uiScale, uiScale };
+    io.Fonts = &dpi->Fonts;
+
+    //ImGui::ScaleDesktop(uiScale / curScale);    // TODO - need to rethink this
+
+    if (defaultIndex != -1)
+        io.FontDefault = io.Fonts->Fonts[defaultIndex];
+    if (currentIndex != -1)
+        ImGui::SetCurrentFont(io.Fonts->Fonts[currentIndex]);
+
+    g_dpiDirty = false;
+}
+
+void ImGui_ImplDX11_SetFontCallback(ImGui_Impl_FontCallback fontCB)
+{
+    g_fontCB = fontCB;
+}
+
+void ImGui_ImplDX11_SetStyle(const ImGuiStyle& style)
+{
+    g_baseStyle = style;
+    g_dpiDirty = true;
+}
+
+
 
 // This is the main rendering function that you have to implement and provide to ImGui (via setting up 'RenderDrawListsFn' in the ImGuiIO structure)
 // If text or lines are blurry when integrating ImGui in your engine:
@@ -309,17 +410,29 @@ IMGUI_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wPa
         if (wParam > 0 && wParam < 0x10000)
             io.AddInputCharacter((unsigned short)wParam);
         return 0;
+    case WM_DPICHANGED:
+    {
+        RECT* const prcNewWindow = (RECT*)lParam;
+        SetWindowPos(hwnd,
+            NULL,
+            prcNewWindow->left,
+            prcNewWindow->top,
+            prcNewWindow->right - prcNewWindow->left,
+            prcNewWindow->bottom - prcNewWindow->top,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+
+        break;
+    }
     }
     return 0;
 }
 
-static void ImGui_ImplDX11_CreateFontsTexture()
+static void ImGui_ImplDX11_CreateFontsTexture(ImDpiData* dpi)
 {
     // Build texture atlas
-    ImGuiIO& io = ImGui::GetIO();
     unsigned char* pixels;
     int width, height;
-    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+    dpi->Fonts.GetTexDataAsRGBA32(&pixels, &width, &height);
 
     // Upload texture to graphics system
     {
@@ -349,12 +462,12 @@ static void ImGui_ImplDX11_CreateFontsTexture()
         srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         srvDesc.Texture2D.MipLevels = desc.MipLevels;
         srvDesc.Texture2D.MostDetailedMip = 0;
-        g_pd3dDevice->CreateShaderResourceView(pTexture, &srvDesc, &g_pFontTextureView);
+        g_pd3dDevice->CreateShaderResourceView(pTexture, &srvDesc, &dpi->pFontTextureView);
         pTexture->Release();
     }
 
     // Store our identifier
-    io.Fonts->TexID = (void *)g_pFontTextureView;
+    dpi->Fonts.TexID = (void *)dpi->pFontTextureView;
 
     // Create texture sampler
     {
@@ -508,8 +621,6 @@ bool    ImGui_ImplDX11_CreateDeviceObjects()
         g_pd3dDevice->CreateDepthStencilState(&desc, &g_pDepthStencilState);
     }
 
-    ImGui_ImplDX11_CreateFontsTexture();
-
     return true;
 }
 
@@ -518,8 +629,13 @@ void    ImGui_ImplDX11_InvalidateDeviceObjects()
     if (!g_pd3dDevice)
         return;
 
+    for (int i = 0; i != g_dpiData.Size; i++)
+    {
+        ImDpiData* dpi = &g_dpiData[i];
+        if (dpi->pFontTextureView) { dpi->pFontTextureView->Release(); dpi->pFontTextureView = NULL; }
+    }
+
     if (g_pFontSampler) { g_pFontSampler->Release(); g_pFontSampler = NULL; }
-    if (g_pFontTextureView) { g_pFontTextureView->Release(); g_pFontTextureView = NULL; ImGui::GetIO().Fonts->TexID = NULL; } // We copied g_pFontTextureView to io.Fonts->TexID so let's clear that as well.
     if (g_pIB) { g_pIB->Release(); g_pIB = NULL; }
     if (g_pVB) { g_pVB->Release(); g_pVB = NULL; }
 
@@ -532,6 +648,8 @@ void    ImGui_ImplDX11_InvalidateDeviceObjects()
     if (g_pInputLayout) { g_pInputLayout->Release(); g_pInputLayout = NULL; }
     if (g_pVertexShader) { g_pVertexShader->Release(); g_pVertexShader = NULL; }
     if (g_pVertexShaderBlob) { g_pVertexShaderBlob->Release(); g_pVertexShaderBlob = NULL; }
+
+    g_dpiDirty = true;
 }
 
 bool    ImGui_ImplDX11_Init(void* hwnd, ID3D11Device* device, ID3D11DeviceContext* device_context)
@@ -577,6 +695,11 @@ bool    ImGui_ImplDX11_Init(void* hwnd, ID3D11Device* device, ID3D11DeviceContex
 void ImGui_ImplDX11_Shutdown()
 {
     ImGui_ImplDX11_InvalidateDeviceObjects();
+    g_dpiData.clear();
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts = NULL;
+
     g_pd3dDevice = NULL;
     g_pd3dDeviceContext = NULL;
     g_hWnd = (HWND)0;
@@ -586,6 +709,9 @@ void ImGui_ImplDX11_NewFrame()
 {
     if (!g_pFontSampler)
         ImGui_ImplDX11_CreateDeviceObjects();
+
+    float uiScale = float(GetDpiForWindow(g_hWnd)) / USER_DEFAULT_SCREEN_DPI;
+    SetUiScale(uiScale);
 
     ImGuiIO& io = ImGui::GetIO();
 

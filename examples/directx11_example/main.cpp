@@ -103,8 +103,15 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
+static void FontCB(ImFontAtlas* fonts, float uiScale)
+{
+    fonts->AddFontFromFileTTF("../../misc/fonts/ProggyClean.ttf", 13.0f * uiScale);
+}
+
 int main(int, char**)
 {
+    SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
     // Create application window
     WNDCLASSEX wc = { sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, LoadCursor(NULL, IDC_ARROW), NULL, NULL, _T("ImGui Example"), NULL };
     RegisterClassEx(&wc);
@@ -126,6 +133,7 @@ int main(int, char**)
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     ImGui_ImplDX11_Init(hwnd, g_pd3dDevice, g_pd3dDeviceContext);
+    ImGui_ImplDX11_SetFontCallback(FontCB);
     //io.NavFlags |= ImGuiNavFlags_EnableKeyboard;  // Enable Keyboard Controls
 
     // Setup style

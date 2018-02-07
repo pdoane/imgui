@@ -25,3 +25,11 @@ IMGUI_API bool        ImGui_ImplDX11_CreateDeviceObjects();
 /*
 IMGUI_API LRESULT   ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 */
+
+
+// DPI Support
+
+typedef void (*ImGui_Impl_FontCallback)(ImFontAtlas* fonts, float uiScale);
+
+void ImGui_ImplDX11_SetFontCallback(ImGui_Impl_FontCallback fontCB);
+void ImGui_ImplDX11_SetStyle(const ImGuiStyle& style);
